@@ -40,6 +40,9 @@ IHostBuilder CreateHostBuilder(string[] args) =>
                 .MinimumLevel.Is(context.HostingEnvironment.IsDevelopment()
                     ? LogEventLevel.Debug
                     : LogEventLevel.Information)
+                .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+                .MinimumLevel.Override("Microsoft.AspNetCore.Authentication", LogEventLevel.Debug)
+                .MinimumLevel.Override("IdentityServer4", LogEventLevel.Debug)
                 .Enrich.FromLogContext()
                 .WriteTo.Console(theme: AnsiConsoleTheme.Code))
             .ConfigureWebHostDefaults(webBuilder =>

@@ -33,6 +33,9 @@ public sealed class SteamProfileService(
             return;
         }
 
+        logger.LogDebug("Getting profile data for subject: {Subject}. Requested claims: {RequestedClaims}",
+            sub, string.Join(", ", context.RequestedClaimTypes));
+
         var user = await userManager.FindByIdAsync(sub);
         if (user == null)
         {
@@ -54,10 +57,16 @@ public sealed class SteamProfileService(
         try
         {
             userSummary = await GetPlayerSummariesAsync([steamId]);
+            if (userSummary != null)
+            {
+                logger.LogDebug("Successfully retrieved Steam player summary for SteamID: {SteamId}", steamId);
+            }
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to retrieve player summary for SteamID: {SteamID}. Some claims will be missing.", steamId);
+            logger.LogError(ex,
+                "Failed to retrieve player summary from Steam API. SteamID: {SteamId}, Endpoint: {Endpoint}",
+                steamId, $"{SteamConstants.ApiBaseUrl}ISteamUser/GetPlayerSummaries/v0002");
         }
 
         var player = userSummary?.Players.FirstOrDefault();

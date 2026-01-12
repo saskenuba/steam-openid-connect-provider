@@ -32,6 +32,8 @@ public sealed class ExternalLoginController(
     {
         const string Provider = "Steam";
 
+        logger.LogInformation("Initiating Steam authentication. ReturnUrl: {ReturnUrl}", returnUrl ?? "(none)");
+
         var redirectUrl = Url.Action("ExternalLoginCallback", new { returnUrl });
         var properties = signInManager.ConfigureExternalAuthenticationProperties(Provider, redirectUrl);
         return Task.FromResult<IActionResult>(new ChallengeResult(Provider, properties));
@@ -46,14 +48,19 @@ public sealed class ExternalLoginController(
 
         if (remoteError != null)
         {
-            throw new Exception($"Error from external provider: {remoteError}");
+            logger.LogError("Steam authentication returned error: {RemoteError}", remoteError);
+            throw new InvalidOperationException($"Error from external provider: {remoteError}");
         }
 
         var info = await signInManager.GetExternalLoginInfoAsync();
         if (info == null)
         {
-            throw new Exception("Error loading external login information.");
+            logger.LogError("Failed to load external login information from Steam. ExternalLoginInfo was null");
+            throw new InvalidOperationException("Error loading external login information.");
         }
+
+        logger.LogDebug("Received external login info. Provider: {Provider}, ProviderKey: {ProviderKey}, Claims: {ClaimCount}",
+            info.LoginProvider, info.ProviderKey, info.Principal.Claims.Count());
 
         var externalLoginResult = await signInManager.ExternalLoginSignInAsync(
             info.LoginProvider, 
@@ -72,7 +79,9 @@ public sealed class ExternalLoginController(
 
         if (string.IsNullOrWhiteSpace(userId))
         {
-            throw new ArgumentNullException(nameof(userId), $"No claim found for {ClaimTypes.NameIdentifier}");
+            logger.LogError("Steam authentication did not provide NameIdentifier claim. Available claims: {Claims}",
+                string.Join(", ", info.Principal.Claims.Select(c => c.Type)));
+            throw new InvalidOperationException($"No claim found for {ClaimTypes.NameIdentifier}");
         }
 
         if (string.IsNullOrWhiteSpace(userName))
@@ -81,6 +90,9 @@ public sealed class ExternalLoginController(
         }
 
         var user = new IdentityUser { UserName = userName, Id = userId };
+
+        logger.LogInformation("Creating new user from Steam authentication. UserName: {UserName}, UserId: {UserId}",
+            userName, userId);
 
         userManager.UserValidators.Clear();
 
@@ -95,6 +107,9 @@ public sealed class ExternalLoginController(
                 return LocalRedirect(returnUrl);
             }
         }
+
+        logger.LogError("Failed to create user. Errors: {Errors}",
+            string.Join("; ", result.Errors.Select(e => e.Description)));
 
         foreach (var error in result.Errors)
         {

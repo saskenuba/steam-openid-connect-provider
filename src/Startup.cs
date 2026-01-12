@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Net.Http.Headers;
 using IdentityServer4.Extensions;
 using IdentityServer4.Services;
@@ -11,10 +12,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Serilog;
 using SteamOpenIdConnectProvider.Domains.Common;
 using SteamOpenIdConnectProvider.Domains.IdentityServer;
 using SteamOpenIdConnectProvider.Domains.Steam;
+using SteamOpenIdConnectProvider.Middleware;
 
 namespace SteamOpenIdConnectProvider;
 
@@ -38,9 +42,17 @@ public sealed class Startup(IConfiguration configuration)
 
         var openIdConfig = configuration.GetSection(OpenIdConfig.ConfigKey);
         services
-            .Configure<OpenIdConfig>(openIdConfig)
-            .AddIdentityServer(options =>
+            .Configure<OpenIdConfig>(openIdConfig);
+
+        services.AddSingleton<IValidateOptions<OpenIdConfig>, OpenIdConfigValidator>();
+        services.AddOptions<OpenIdConfig>().ValidateOnStart();
+
+        services.AddIdentityServer(options =>
             {
+                options.Events.RaiseErrorEvents = true;
+                options.Events.RaiseFailureEvents = true;
+                options.Events.RaiseInformationEvents = true;
+                options.Events.RaiseSuccessEvents = true;
                 options.UserInteraction.LoginUrl = "/external-login";
                 options.UserInteraction.LogoutUrl = "/external-logout";
             })
@@ -53,8 +65,12 @@ public sealed class Startup(IConfiguration configuration)
 
         var steamConfig = configuration.GetSection(SteamConfig.ConfigKey);
         services
-            .Configure<SteamConfig>(steamConfig)
-            .AddHttpClient<IProfileService, SteamProfileService>();
+            .Configure<SteamConfig>(steamConfig);
+
+        services.AddSingleton<IValidateOptions<SteamConfig>, SteamConfigValidator>();
+        services.AddOptions<SteamConfig>().ValidateOnStart();
+
+        services.AddHttpClient<IProfileService, SteamProfileService>();
 
         services.AddAuthentication()
             .AddCookie(options =>
@@ -92,8 +108,18 @@ public sealed class Startup(IConfiguration configuration)
                 });
     }
 
-    public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+    public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ILogger<Startup> logger)
     {
+        // Log configuration at startup (with secrets masked)
+        var openIdConfig = configuration.GetSection(OpenIdConfig.ConfigKey).Get<OpenIdConfig>()!;
+        var steamConfig = configuration.GetSection(SteamConfig.ConfigKey).Get<SteamConfig>()!;
+
+        logger.LogInformation(
+            "Configuration loaded - ClientId: {ClientId}, RedirectURIs: {RedirectCount}, SteamKey: {HasValidSteamKey}",
+            openIdConfig.ClientId,
+            openIdConfig.RedirectUris.Count(),
+            !string.IsNullOrEmpty(steamConfig.ApplicationKey) && steamConfig.ApplicationKey != "changeme");
+
         var hostingConfig = configuration.GetSection(HostingConfig.Config).Get<HostingConfig>()!;
         var forwardOptions = new ForwardedHeadersOptions
         {
@@ -109,6 +135,10 @@ public sealed class Startup(IConfiguration configuration)
         if (env.IsDevelopment())
         {
             app.UseDeveloperExceptionPage();
+        }
+        else
+        {
+            app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
         }
 
         app.UseCookiePolicy(new CookiePolicyOptions
@@ -138,7 +168,16 @@ public sealed class Startup(IConfiguration configuration)
             await next();
         });
 
-        app.UseSerilogRequestLogging();
+        app.UseMiddleware<CorrelationIdMiddleware>();
+
+        app.UseSerilogRequestLogging(options =>
+        {
+            options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+            {
+                diagnosticContext.Set("CorrelationId", httpContext.Items["CorrelationId"] ?? "unknown");
+                diagnosticContext.Set("ClientIP", httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+            };
+        });
         app.UseRouting();
         app.UseIdentityServer();
         app.UseEndpoints(endpoints =>
