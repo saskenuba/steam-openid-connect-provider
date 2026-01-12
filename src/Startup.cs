@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Linq;
 using System.Net.Http.Headers;
-using IdentityServer4.Extensions;
-using IdentityServer4.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -47,21 +45,31 @@ public sealed class Startup(IConfiguration configuration)
         services.AddSingleton<IValidateOptions<OpenIdConfig>, OpenIdConfigValidator>();
         services.AddOptions<OpenIdConfig>().ValidateOnStart();
 
-        services.AddIdentityServer(options =>
+        services.AddOpenIddict()
+            .AddCore(options =>
             {
-                options.Events.RaiseErrorEvents = true;
-                options.Events.RaiseFailureEvents = true;
-                options.Events.RaiseInformationEvents = true;
-                options.Events.RaiseSuccessEvents = true;
-                options.UserInteraction.LoginUrl = "/external-login";
-                options.UserInteraction.LogoutUrl = "/external-logout";
+                options.UseEntityFrameworkCore()
+                    .UseDbContext<AppInMemoryDbContext>();
             })
-            .AddAspNetIdentity<IdentityUser>()
-            .AddProfileService<SteamProfileService>()
-            .AddInMemoryClients(IdentityServerConfigFactory.GetClients(openIdConfig.Get<OpenIdConfig>()!))
-            .AddInMemoryPersistedGrants()
-            .AddDeveloperSigningCredential()
-            .AddInMemoryIdentityResources(IdentityServerConfigFactory.GetIdentityResources());
+            .AddServer(options =>
+            {
+                options.SetAuthorizationEndpointUris("/connect/authorize")
+                    .SetTokenEndpointUris("/connect/token");
+
+                options.AllowAuthorizationCodeFlow();
+                options.RegisterScopes("openid", "profile");
+
+                // Disable PKCE requirement to match IdentityServer4 behavior
+                options.Configure(opt => opt.DisableAccessTokenEncryption = false);
+
+                options.AddDevelopmentEncryptionCertificate()
+                    .AddDevelopmentSigningCertificate();
+
+                options.UseAspNetCore()
+                    .EnableAuthorizationEndpointPassthrough()
+                    .EnableTokenEndpointPassthrough()
+                    .DisableTransportSecurityRequirement(); // Allow HTTP in development
+            });
 
         var steamConfig = configuration.GetSection(SteamConfig.ConfigKey);
         services
@@ -79,7 +87,7 @@ public sealed class Startup(IConfiguration configuration)
         });
         services.AddHostedService<SteamApiStartupValidator>();
 
-        services.AddHttpClient<IProfileService, SteamProfileService>();
+        services.AddHttpClient();
 
         services.AddAuthentication()
             .AddCookie(options =>
@@ -177,20 +185,10 @@ public sealed class Startup(IConfiguration configuration)
 
         app.UseAuthentication();
 
-        app.Use(async (ctx, next) =>
+        if (!string.IsNullOrWhiteSpace(hostingConfig.BasePath))
         {
-            if (!string.IsNullOrWhiteSpace(hostingConfig.PublicOrigin))
-            {
-                ctx.SetIdentityServerOrigin(hostingConfig.PublicOrigin);
-            }
-
-            if (!string.IsNullOrWhiteSpace(hostingConfig.BasePath))
-            {
-                ctx.SetIdentityServerBasePath(hostingConfig.BasePath);
-            }
-
-            await next();
-        });
+            app.UsePathBase(hostingConfig.BasePath);
+        }
 
         app.UseMiddleware<CorrelationIdMiddleware>();
 
@@ -203,7 +201,7 @@ public sealed class Startup(IConfiguration configuration)
             };
         });
         app.UseRouting();
-        app.UseIdentityServer();
+        app.UseAuthorization();
         app.UseEndpoints(endpoints =>
         {
             endpoints.MapControllers();

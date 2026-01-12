@@ -1,5 +1,6 @@
 ﻿using System;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Events;
@@ -16,9 +17,17 @@ try
 {
     Log.Information("Starting web host");
 
-    await CreateHostBuilder(args)
-        .Build()
-        .RunAsync();
+    var host = CreateHostBuilder(args).Build();
+
+    // Seed OpenIddict applications
+    using (var scope = host.Services.CreateScope())
+    {
+        var services = scope.ServiceProvider;
+        var config = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<SteamOpenIdConnectProvider.Domains.IdentityServer.OpenIdConfig>>().Value;
+        await SteamOpenIdConnectProvider.Domains.IdentityServer.OpenIddictApplicationSeeder.SeedAsync(services, config);
+    }
+
+    await host.RunAsync();
 
     return 0;
 }
@@ -42,7 +51,7 @@ IHostBuilder CreateHostBuilder(string[] args) =>
                     : LogEventLevel.Information)
                 .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
                 .MinimumLevel.Override("Microsoft.AspNetCore.Authentication", LogEventLevel.Debug)
-                .MinimumLevel.Override("IdentityServer4", LogEventLevel.Debug)
+                .MinimumLevel.Override("OpenIddict", LogEventLevel.Debug)
                 .Enrich.FromLogContext()
                 .WriteTo.Console(theme: AnsiConsoleTheme.Code))
             .ConfigureWebHostDefaults(webBuilder =>

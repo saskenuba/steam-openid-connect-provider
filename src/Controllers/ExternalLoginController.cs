@@ -2,9 +2,6 @@
 using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
-using IdentityServer4.Events;
-using IdentityServer4.Extensions;
-using IdentityServer4.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -18,8 +15,6 @@ namespace SteamOpenIdConnectProvider.Controllers;
 public sealed class ExternalLoginController(
     SignInManager<IdentityUser> signInManager,
     UserManager<IdentityUser> userManager,
-    IIdentityServerInteractionService interaction,
-    IEventService events,
     IOptions<OpenIdConfig> config,
     ILogger<ExternalLoginController> logger)
     : Controller
@@ -120,18 +115,20 @@ public sealed class ExternalLoginController(
     }
 
     [HttpGet("external-logout")]
-    public async Task<ActionResult> ExternalLogout(string logoutId)
+    public async Task<ActionResult> ExternalLogout(
+        string? logoutId = null,
+        string? post_logout_redirect_uri = null)
     {
-        var logout = await interaction.GetLogoutContextAsync(logoutId);
-
         if (User.Identity?.IsAuthenticated == true)
         {
             await signInManager.SignOutAsync();
-            await events.RaiseAsync(new UserLogoutSuccessEvent(User.GetSubjectId(), User.GetDisplayName()));
+            logger.LogInformation("User logged out");
         }
 
-        return Redirect(logout?.PostLogoutRedirectUri ??
-                        _config.PostLogoutRedirectUris.FirstOrDefault() ??
-                        Url.Content("~/"));
+        var redirectUri = post_logout_redirect_uri
+            ?? _config.PostLogoutRedirectUris.FirstOrDefault()
+            ?? Url.Content("~/");
+
+        return Redirect(redirectUri);
     }
 }
