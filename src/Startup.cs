@@ -70,6 +70,15 @@ public sealed class Startup(IConfiguration configuration)
         services.AddSingleton<IValidateOptions<SteamConfig>, SteamConfigValidator>();
         services.AddOptions<SteamConfig>().ValidateOnStart();
 
+        // Register connectivity validator with HttpClient for fail-fast validation
+        services.AddHttpClient<ISteamApiConnectivityValidator, SteamApiConnectivityValidator>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.DefaultRequestHeaders.UserAgent.Add(
+                new ProductInfoHeaderValue("SteamOpenIdConnectProvider", "1.1.0"));
+        });
+        services.AddHostedService<SteamApiStartupValidator>();
+
         services.AddHttpClient<IProfileService, SteamProfileService>();
 
         services.AddAuthentication()
@@ -119,6 +128,21 @@ public sealed class Startup(IConfiguration configuration)
             openIdConfig.ClientId,
             openIdConfig.RedirectUris.Count(),
             !string.IsNullOrEmpty(steamConfig.ApplicationKey) && steamConfig.ApplicationKey != "changeme");
+
+        // Log redirect URIs for troubleshooting
+        foreach (var uri in openIdConfig.RedirectUris)
+        {
+            logger.LogInformation("  Redirect URI: {RedirectUri}", uri);
+        }
+
+        // Log post-logout redirect URIs if configured
+        if (openIdConfig.PostLogoutRedirectUris.Any())
+        {
+            foreach (var uri in openIdConfig.PostLogoutRedirectUris)
+            {
+                logger.LogInformation("  Post-logout redirect URI: {PostLogoutRedirectUri}", uri);
+            }
+        }
 
         var hostingConfig = configuration.GetSection(HostingConfig.Config).Get<HostingConfig>()!;
         var forwardOptions = new ForwardedHeadersOptions
