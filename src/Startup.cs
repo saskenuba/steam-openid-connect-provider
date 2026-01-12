@@ -38,6 +38,13 @@ public sealed class Startup(IConfiguration configuration)
             .AddEntityFrameworkStores<AppInMemoryDbContext>()
             .AddDefaultTokenProviders();
 
+        // Configure ASP.NET Identity to use external login path instead of default /Account/Login
+        services.ConfigureApplicationCookie(options =>
+        {
+            options.LoginPath = "/external-login";
+            options.AccessDeniedPath = "/external-login";
+        });
+
         var openIdConfig = configuration.GetSection(OpenIdConfig.ConfigKey);
         services
             .Configure<OpenIdConfig>(openIdConfig);
